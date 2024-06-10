@@ -1,0 +1,10 @@
+[package]
+name = "openbook-test"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+openbook = { path = "../openbook" }
+openbook-v2.workspace = true
+solana-sdk.workspace = true
+tokio.workspace = true

@@ -1,0 +1,33 @@
+[workspace]
+resolver = "2"
+
+members = [
+    "bin",
+    "openbook",
+]
+
+default-members = ["bin"]
+
+[workspace.dependencies]
+anchor-client = { version = "0.29.0" }
+anchor-lang = { version = "0.29.0" }
+anchor-spl = { version = "0.29.0" }
+anyhow = "1.0.86"
+async-once-cell = { version = "0.4.2", features = ["unpin"] }
+async-trait = { version = "0.1.80" }
+backon = "0.4.3"
+fixed = { git = "https://github.com/blockworks-foundation/fixed.git", branch = "v1.11.0-borsh0_10-mango" }
+itertools = { version = "0.13.0" }
+openbook-v2 = { git = "https://github.com/openbook-dex/openbook-v2.git", features = ["client"] }
+rand = "0.8.5"
+reqwest = { version = "0.11.27" }
+serde = { version = "1.0.203", features = ["derive"] }
+serde_json = "1.0.117"
+solana-account-decoder = { version = "=1.17.34" }
+solana-client = "=1.17.34"
+solana-rpc-client-api = "=1.17.34"
+solana-sdk = "=1.17.34"
+solana-transaction-status = "=1.17.34"
+spl-associated-token-account = "=2.3.0"
+tokio = "1.36.0"
+tracing = "0.1.40"
