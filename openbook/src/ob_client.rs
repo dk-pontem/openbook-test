@@ -1,15 +1,10 @@
-use std::{
-    collections::HashMap,
-    fmt::{Debug, Formatter},
-    str::FromStr,
-    sync::Arc,
-};
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anchor_lang::{prelude::System, Id};
 use anchor_spl::{associated_token::AssociatedToken, token::Token};
 use anyhow::{Context, Error, Result};
 use rand::random;
-use serde::{Deserialize, Serialize};
 use spl_associated_token_account::get_associated_token_address;
 
 use openbook_v2::{
@@ -24,71 +19,7 @@ use solana_sdk::{
     signature::Keypair, signer::Signer,
 };
 
-use crate::utils::get_unix_secs;
-use crate::{
-    rpc::Rpc,
-    utils::read_keypair,
-    {
-        account_fetcher::{AccountFetcherTrait, CachedAccountFetcher, RpcAccountFetcher},
-        context::MarketContext,
-    },
-};
-
-#[derive(Clone, Deserialize, Serialize)]
-pub struct OpenOrderNode {
-    pub is_buy: bool,
-    pub price: f64,
-    pub amount: f64,
-    pub order_id: u64,
-    pub timestamp: u64,
-    pub slot: u8,
-}
-
-impl Debug for OpenOrderNode {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        writeln!(f, "OpenOrders {{")?;
-        writeln!(f, "        order_id: {:?}", self.order_id)?;
-        writeln!(f, "        is_buy: {:?}", self.is_buy)?;
-        writeln!(f, "        price: {:?}", self.price)?;
-        writeln!(f, "        amount: {:?}", self.amount)?;
-        writeln!(f, "        timestamp: {:?}", self.timestamp)?;
-        writeln!(f, "        slot: {:?}", self.slot)?;
-        writeln!(f, "}}")
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct OpenOrderState {
-    pub base_in_oos: f64,
-    pub quote_in_oos: f64,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct BestQuotes {
-    pub highest_bid: f64,
-    pub lowest_ask: f64,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct PricePoint {
-    pub id: String,
-    pub mint_symbol: String,
-    pub vs_token: String,
-    pub vs_token_symbol: String,
-    pub price: f64,
-}
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct PriceData {
-    pub data: HashMap<String, PricePoint>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct AtaBalances {
-    pub quote_balance: f64,
-    pub base_balance: f64,
-    pub total_balance: f64,
-    pub price: f64,
-}
+use crate::{context::MarketContext, rpc::Rpc};
 
 /// OpenBook v2 Client to interact with the OpenBook market and perform actions.
 #[derive(Clone)]
@@ -107,9 +38,6 @@ pub struct OBClient {
 
     /// The public key of the market ID.
     pub market_id: Pubkey,
-
-    /// The account fetcher used to retrieve account data.
-    pub account_fetcher: Arc<dyn AccountFetcherTrait>,
 
     /// Account info of the wallet on the market (e.g., open orders).
     pub open_orders_account: Pubkey,
@@ -174,59 +102,38 @@ impl OBClient {
     /// 10. Create new open orders and index accounts if the `new` parameter is set to `true`.
     ///
     pub async fn new(
+        rpc_url: String,
+        owner: Arc<Keypair>,
+        open_orders_account: Option<Pubkey>,
         commitment: CommitmentConfig,
         market_id: Pubkey,
-        new: bool,
     ) -> Result<Self, Error> {
-        let rpc_url =
-            std::env::var("RPC_URL").unwrap_or("https://api.mainnet-beta.solana.com".to_string());
-        let key_path = std::env::var("KEY_PATH").unwrap_or("".to_string());
-
-        let owner = read_keypair(&key_path);
-        let rpc_client = RpcClient::new_with_commitment(rpc_url.clone(), commitment);
-        let oos_key_str = std::env::var("OOS_KEY").unwrap_or("".to_string());
-
-        let orders_key = Pubkey::from_str(oos_key_str.as_str());
-
         let pub_owner_key = owner.pubkey();
-
-        let rpc = Rpc::new(rpc_client);
-
-        let market_info = rpc.fetch_anchor_account::<Market>(&market_id).await?;
-
+        let rpc_client = Rpc::new(RpcClient::new_with_commitment(rpc_url.clone(), commitment));
+        let market_info = rpc_client
+            .fetch_anchor_account::<Market>(&market_id)
+            .await?;
         let base_ata = get_associated_token_address(&pub_owner_key.clone(), &market_info.base_mint);
         let quote_ata =
             get_associated_token_address(&pub_owner_key.clone(), &market_info.quote_mint);
-
-        let open_orders_account = Default::default();
 
         let context = MarketContext {
             market: market_info,
             address: market_id,
         };
-        let rpc_client = RpcClient::new_with_commitment(rpc_url.clone(), commitment);
-
-        let account_fetcher = Arc::new(CachedAccountFetcher::new(Arc::new(RpcAccountFetcher {
-            rpc: rpc_client,
-        })));
 
         let mut ob_client = Self {
-            rpc_client: rpc,
+            rpc_client,
             market_info,
-            owner: owner.into(),
+            owner,
             quote_ata,
             base_ata,
-            account_fetcher,
             market_id,
-            open_orders_account,
+            open_orders_account: open_orders_account.unwrap_or_default(),
             context,
         };
 
-        if let Ok(key) = orders_key {
-            ob_client.open_orders_account = key;
-        }
-
-        if new {
+        if open_orders_account.is_none() {
             ob_client.open_orders_account = ob_client.find_or_create_account().await?;
         }
 
@@ -742,4 +649,12 @@ impl OBClient {
             recent_hash,
         ))
     }
+}
+
+/// Gets the current UNIX timestamp in seconds.
+fn get_unix_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
 }
