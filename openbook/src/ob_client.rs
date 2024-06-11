@@ -18,13 +18,10 @@ use openbook_v2::{
 };
 use solana_client::nonblocking::rpc_client::RpcClient;
 
+use solana_sdk::transaction::Transaction;
 use solana_sdk::{
-    clock::Slot,
-    commitment_config::CommitmentConfig,
-    instruction::Instruction,
-    pubkey::Pubkey,
-    signature::{Keypair, Signature},
-    signer::Signer,
+    commitment_config::CommitmentConfig, instruction::Instruction, pubkey::Pubkey,
+    signature::Keypair, signer::Signer,
 };
 
 use crate::utils::get_unix_secs;
@@ -263,7 +260,7 @@ impl OBClient {
         limit_price: f64,
         quote_size: u64,
         side: Side,
-    ) -> Result<(bool, Signature, u64, Slot)> {
+    ) -> Result<Transaction> {
         let current_time = get_unix_secs();
         let price_lots = self.native_price_to_lots_price(limit_price);
         let max_quote_lots = self
@@ -316,19 +313,7 @@ impl OBClient {
             }),
         };
 
-        let (confirmed, sig) = self
-            .rpc_client
-            .send_and_confirm((*self.owner).insecure_clone(), vec![ix])
-            .await?;
-
-        // get slot
-        let max_slot: Slot = self
-            .account_fetcher
-            .transaction_max_slot(sig)
-            .await?
-            .unwrap_or(0);
-
-        Ok((confirmed, sig, oid, max_slot))
+        self.to_trx(vec![ix]).await
     }
 
     pub async fn place_market_order(
@@ -336,7 +321,7 @@ impl OBClient {
         limit_price: f64,
         quote_size: u64,
         side: Side,
-    ) -> Result<(bool, Signature)> {
+    ) -> Result<Transaction> {
         let current_time = get_unix_secs();
         let price_lots = self.native_price_to_lots_price(limit_price);
         let max_quote_lots = self
@@ -390,9 +375,7 @@ impl OBClient {
             }),
         };
 
-        self.rpc_client
-            .send_and_confirm((*self.owner).insecure_clone(), vec![ix])
-            .await
+        self.to_trx(vec![ix]).await
     }
 
     /// # Example
@@ -416,7 +399,7 @@ impl OBClient {
     ///     Ok(())
     /// }
     /// ```
-    pub async fn cancel_limit_order(&self, order_id: u128) -> Result<(bool, Signature)> {
+    pub async fn cancel_limit_order(&self, order_id: u128) -> Result<Transaction> {
         let ix = Instruction {
             program_id: openbook_v2::id(),
             accounts: {
@@ -436,9 +419,7 @@ impl OBClient {
             }),
         };
 
-        self.rpc_client
-            .send_and_confirm((*self.owner).insecure_clone(), vec![ix])
-            .await
+        self.to_trx(vec![ix]).await
     }
 
     /// # Example
@@ -462,7 +443,7 @@ impl OBClient {
     ///     Ok(())
     /// }
     /// ```
-    pub async fn cancel_all(&self) -> Result<(bool, Signature)> {
+    pub async fn cancel_all(&self) -> Result<Transaction> {
         let ix = Instruction {
             program_id: openbook_v2::id(),
             accounts: {
@@ -483,9 +464,7 @@ impl OBClient {
             }),
         };
 
-        self.rpc_client
-            .send_and_confirm((*self.owner).insecure_clone(), vec![ix])
-            .await
+        self.to_trx(vec![ix]).await
     }
 
     /// # Example
@@ -569,7 +548,7 @@ impl OBClient {
         &self,
         account_num: u32,
         name: &str,
-    ) -> Result<(bool, Signature, Pubkey)> {
+    ) -> Result<Transaction> {
         let owner = &self.owner;
         let payer = &self.owner;
         let market = self.market_id;
@@ -613,12 +592,7 @@ impl OBClient {
             ),
         };
 
-        let (confirmed, sig) = self
-            .rpc_client
-            .send_and_confirm((*self.owner).insecure_clone(), vec![ix])
-            .await?;
-
-        Ok((confirmed, sig, account))
+        self.to_trx(vec![ix]).await
     }
 
     pub fn owner(&self) -> Pubkey {
@@ -649,7 +623,7 @@ impl OBClient {
         maker_fee: i64,
         taker_fee: i64,
         time_expiry: i64,
-    ) -> Result<(bool, Signature)> {
+    ) -> Result<Transaction> {
         let ix = Instruction {
             program_id: openbook_v2::id(),
             accounts: {
@@ -691,9 +665,7 @@ impl OBClient {
             }),
         };
 
-        self.rpc_client
-            .send_and_confirm((*self.owner).insecure_clone(), vec![ix])
-            .await
+        self.to_trx(vec![ix]).await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -706,7 +678,7 @@ impl OBClient {
         user_quote_account: Pubkey,
         market_base_vault: Pubkey,
         market_quote_vault: Pubkey,
-    ) -> Result<(bool, Signature)> {
+    ) -> Result<Transaction> {
         let ix = Instruction {
             program_id: openbook_v2::id(),
             accounts: {
@@ -730,9 +702,7 @@ impl OBClient {
             }),
         };
 
-        self.rpc_client
-            .send_and_confirm((*self.owner).insecure_clone(), vec![ix])
-            .await
+        self.to_trx(vec![ix]).await
     }
 
     pub fn native_price_to_lots_price(&self, limit_price: f64) -> i64 {
@@ -757,5 +727,19 @@ impl OBClient {
             .get_token_account_balance(ata)
             .await?;
         Ok(r.ui_amount.unwrap())
+    }
+
+    pub async fn to_trx(&self, instructions: Vec<Instruction>) -> anyhow::Result<Transaction> {
+        let (recent_hash, _) = self
+            .rpc_client
+            .inner()
+            .get_latest_blockhash_with_commitment(self.rpc_client.inner().commitment())
+            .await?;
+        Ok(Transaction::new_signed_with_payer(
+            &instructions,
+            Some(&self.owner.pubkey()),
+            &[&self.owner],
+            recent_hash,
+        ))
     }
 }
